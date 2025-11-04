@@ -1,16 +1,10 @@
 
+import math
 import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-import kagglehub
-
-dataset_path = kagglehub.dataset_download("maharshipandya/-spotify-tracks-dataset")
-
-import math
-from data_structures import *
-import heapq
-
+from data_structures import MinHeap
 
 class Song:
 
@@ -40,4 +34,20 @@ class cosine_similarity:
         return dot_product / (magnitude1 * magnitude2)
 
 class SongMatcher:
-    print("SongMatcher class is not implemented yet. -ML")
+    def __init__(self, target_song, candidate_songs):
+        self.target_song = target_song
+        self.candidate_songs = candidate_songs
+
+    def match(self, top_k=5):
+        heap = MinHeap(max_size=top_k)
+
+        for candidate in self.candidate_songs:
+            sim = cosine_similarity(self.target_song, candidate).compute()
+            heap.insert(sim, candidate)
+
+        results = []
+        while len(heap.heap) > 0:
+            results.append(heap.extract_min())
+
+        results.reverse()
+        return results

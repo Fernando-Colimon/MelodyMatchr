@@ -4,6 +4,15 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from .song_similarity import Song as SongClass, cosine_similarity
+import kagglehub
+
+dataset_path = kagglehub.dataset_download("maharshipandya/-spotify-tracks-dataset")
+
+import math
+from data_structures import *
+import heapq
+
+
 
 app = FastAPI(title="MelodyMatchr API",
               description="Simple endpoints for computing song similarity and matching",
