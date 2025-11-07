@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from .data_structures import MinHeap
+from .data_structures import MinHeap, BST
 
 
 class Song:
@@ -62,8 +62,6 @@ class SongPredictor:
     
     def _build_indices(self):
         """Build BST index on key features for fast lookup"""
-        from data_structures import BST
-       
         self.feature_bst = BST()
         for song in self.songs:
             if song.features:  
@@ -72,7 +70,6 @@ class SongPredictor:
     
     def predict_similar(self, target_song, tolerance=0.1, top_k=10):
         """Predict similar songs using feature range search"""
-        from data_structures import MinHeap
         
         if not target_song.features:
             return []

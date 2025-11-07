@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .song_similarity import Song as SongClass, cosine_similarity, SongPredictor, load_songs_from_dataset
@@ -18,6 +19,16 @@ app = FastAPI(title="MelodyMatchr API",
               description="Simple endpoints for computing song similarity and matching",
               version="0.1")
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",  # Next.js development
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 class SongModel(BaseModel):
     id: Optional[str] = None
@@ -48,7 +59,7 @@ class PredictRequest(BaseModel):
 
 
 
-all_songs = load_songs_from_dataset(dataset_path)
+all_songs = load_songs_from_dataset(dataset_path, SongClass)
 search_trie = SongSearchTrie()
 
 for song in all_songs:
