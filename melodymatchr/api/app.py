@@ -3,13 +3,13 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from .song_similarity import Song as SongClass, cosine_similarity
+from .song_similarity import Song as SongClass, cosine_similarity, SongPredictor, load_songs_from_dataset
 import kagglehub
 
 dataset_path = kagglehub.dataset_download("maharshipandya/-spotify-tracks-dataset")
 
 import math
-from data_structures import *
+from .data_structures import *
 import heapq
 
 
@@ -35,6 +35,60 @@ class MatchRequest(BaseModel):
     target: SongModel
     candidates: List[SongModel]
     top_k: Optional[int] = 5
+
+# Search feature optional DELETE OR FIX if broken
+class SearchRequest(BaseModel):
+    query: str
+    max_results: Optional[int] = 5
+
+class PredictRequest(BaseModel):
+    song: SongModel
+    tolerance: Optional[float] = 0.1
+    top_k: Optional[int] = 5
+
+
+
+all_songs = load_songs_from_dataset(dataset_path)
+search_trie = SongSearchTrie()
+
+for song in all_songs:
+    search_trie.insert(song)
+
+song_predictor = SongPredictor(all_songs)
+
+@app.post("/search")
+async def search(req: SearchRequest):
+    results = search_trie.search(req.query, max_results=req.max_results or 5)
+    return {
+        "query": req.query,
+        "results": [
+            {"id": song.id, "name": song.name, "artist": song.artist} 
+            for song in results
+        ]
+    }
+
+@app.post("/predict")
+async def predict_similar_songs(req: PredictRequest):
+    """Predict similar songs based on features"""
+    target = to_internal_song(req.song)
+    
+    results = song_predictor.predict_similar(
+        target, 
+        tolerance=req.tolerance,
+        top_k=req.top_k
+    )
+    
+    return {
+        "predictions": [
+            {
+                "id": song.id,
+                "name": song.name,
+                "artist": song.artist,
+                "similarity": score
+            }
+            for score, song in results
+        ]
+    }
 
 
 def to_internal_song(m: SongModel) -> SongClass:
