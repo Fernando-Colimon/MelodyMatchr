@@ -3,12 +3,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-
-from .song_similarity import Song as SongClass, cosine_similarity, SongMatcher, SongPredictor
+from song_similarity import Song as SongClass, cosine_similarity, SongMatcher, SongPredictor, SongMatcherHashTable
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
-from .data_structures import *
+from data_structures import *
 
 import kagglehub
 
@@ -46,7 +45,7 @@ df_clean = df[['track_id', 'track_name', 'artists'] + all_feature_cols].copy()
 # Create a list of Song objects for easy access
 song_database = []
 song_name_bst = BST()  # BST for fast song name lookups
-search_trie = SongSearchTrie() #Trie for prefix search
+search_trie = SongSearchTrie()  # Trie for prefix search
 # Create BSTs indexed by key features for efficient range filtering
 # Using composite score (average of danceability, energy, valence)
 feature_bst = BST()  # BST indexed by composite feature score
@@ -68,12 +67,12 @@ for idx, row in df_clean.iterrows():
     # Index by composite feature score (danceability + energy + valence average)
     composite_score = (features[0] + features[1] + features[9]) / 3.0
     feature_bst.insert(composite_score, song_obj)
-    #Insert into trie for prefix search
+    # Insert into trie for prefix search
     search_trie.insert(song_obj)
 
 print(f"Indexed {len(song_database)} songs with BST feature indexing")
 
-#Initialize song predictor
+# Initialize song predictor
 song_predictor = SongPredictor(song_database)
 
 app = FastAPI(title="MelodyMatchr API",
@@ -90,19 +89,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# song finder to handle duplicate titles
+def find_song_smart(query: str, song_database, song_name_bst):
+    """
+    Smart song finder that handles duplicates by checking for "song - artist" format
+    Examples:
+        "Blinding Lights" -> returns first match
+        "Blinding Lights - The Weeknd" -> returns exact artist match
+    """
+    query = query.lower().strip()
+    
+    # Check if query contains " - " (song - artist format)
+    if " - " in query:
+        parts = query.split(" - ", 1)
+        song_part = parts[0].strip()
+        artist_part = parts[1].strip()
+        
+        # Search for match with both song and artist
+        for song in song_database:
+            if (song_part in song.name.lower() and 
+                artist_part in song.artist.lower()):
+                return song
+        
+        # If no match with artist, try just song name
+        query = song_part
+    
+    # Try exact match using BST first
+    target_song = song_name_bst.search(query)
+    
+    # If no exact match, find partial matches
+    if not target_song:
+        for song in song_database:
+            if query in song.name.lower():
+                return song
+    
+    return target_song
+
+
 class SongModel(BaseModel):
     id: Optional[str] = None
     name: Optional[str] = None
     artist: Optional[str] = None
     features: List[float]
-class SimilarityRequest(BaseModel):
-    song1: SongModel
-    song2: SongModel
 
-class MatchRequest(BaseModel):
-    target: SongModel
-    candidates: List[SongModel]
-    top_k: Optional[int] = 5
 
 class SearchRequest(BaseModel):
     song_name: str
@@ -125,23 +155,56 @@ async def health():
     return {"status": "ok"}
 
 
-@app.post("/similarity")
-async def similarity(req: SimilarityRequest):
-    s1 = to_internal_song(req.song1)
-    s2 = to_internal_song(req.song2)
-    sim = cosine_similarity(s1, s2).compute()
-    return {"similarity": sim}
+## HashTable Search Endpoint
+@app.post("/search/hashtable")
+async def search_hashtable(req: SearchRequest):
+    """
+    Search for a song by name and return top K similar songs from the database.
+    Uses HashTable-based matching for faster top-k retrieval.
+    
+    Supports format: "Song Name" or "Song Name - Artist Name"
+    """
+    
+    query = req.song_name.strip()
 
+    if not query:
+        raise HTTPException(status_code=400, detail="Song name cannot be empty")
 
-@app.post("/match")
-async def match(req: MatchRequest):
-    target = to_internal_song(req.target)
-    candidates = [to_internal_song(c) for c in req.candidates]
+    # Use smart finder to handle duplicates
+    target_song = find_song_smart(query, song_database, song_name_bst)
 
-    top_k = max(1, int(req.top_k or 5))
+    if not target_song:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Song '{req.song_name}' not found in database. Try format: 'Song Name - Artist Name'"
+        )
 
-    # Use SongMatcher class from song_similarity.py
-    matcher = SongMatcher(target, candidates)
+    # Calculate target song's composite score
+    target_composite = (target_song.features[0] + target_song.features[1] + target_song.features[9]) / 3.0
+
+    # Use BST range_search to filter candidates within similar feature range
+    range_tolerance = 0.2
+    min_score = max(0.0, target_composite - range_tolerance)
+    max_score = min(1.0, target_composite + range_tolerance)
+
+    # Get candidate songs using BST range search
+    candidates = feature_bst.range_search(min_score, max_score)
+
+    # Remove target song from candidates if present
+    candidates = [song for song in candidates if song.id != target_song.id]
+
+    # If we didn't get enough candidates from range search, expand range
+    if len(candidates) < 100:
+        range_tolerance = 0.4
+        min_score = max(0.0, target_composite - range_tolerance)
+        max_score = min(1.0, target_composite + range_tolerance)
+        candidates = feature_bst.range_search(min_score, max_score)
+        candidates = [song for song in candidates if song.id != target_song.id]
+
+    top_k = max(1, int(req.top_k or 3))
+
+    # Use SongMatcherHashTable class from song_similarity.py on filtered candidates
+    matcher = SongMatcherHashTable(target_song, candidates)
     results = matcher.match(top_k=top_k)
 
     # Format results
@@ -154,32 +217,39 @@ async def match(req: MatchRequest):
             "similarity": similarity
         })
 
-    return {"matches": matches}
+    return {
+        "searched_song": {
+            "id": target_song.id,
+            "name": target_song.name,
+            "artist": target_song.artist
+        },
+        "matches": matches
+    }
 
 
+## MinHeap Search Endpoint
 @app.post("/search")
 async def search(req: SearchRequest):
     """
     Search for a song by name and return top K similar songs from the database.
-    Uses BST for exact match lookup, falls back to linear search for partial matches.
+    Uses MinHeap-based matching for memory-efficient top-k retrieval.
+    
+    Supports format: "Song Name" or "Song Name - Artist Name"
     """
-    query = req.song_name.lower().strip()
+
+    query = req.song_name.strip()
 
     if not query:
         raise HTTPException(status_code=400, detail="Song name cannot be empty")
 
-    # Try exact match using BST first (O(log n))
-    target_song = song_name_bst.search(query)
-
-    # If no exact match, fall back to partial match using linear search
-    if not target_song:
-        for song in song_database:
-            if query in song.name.lower():
-                target_song = song
-                break
+    # Use smart finder to handle duplicates
+    target_song = find_song_smart(query, song_database, song_name_bst)
 
     if not target_song:
-        raise HTTPException(status_code=404, detail=f"Song '{req.song_name}' not found in database")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"Song '{req.song_name}' not found in database. Try format: 'Song Name - Artist Name'"
+        )
 
     # Calculate target song's composite score
     target_composite = (target_song.features[0] + target_song.features[1] + target_song.features[9]) / 3.0
@@ -229,12 +299,14 @@ async def search(req: SearchRequest):
         "matches": matches
     }
 
+
 @app.post("/search/prefix")
 async def prefix_search(req: PrefixSearchRequest):
     """
     Search for songs by prefix using Trie data structure.
     Returns songs whose names start with the given query string.
     """
+
     if not req.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
@@ -249,7 +321,6 @@ async def prefix_search(req: PrefixSearchRequest):
     }
 
 
-# NEW: Predict similar songs endpoint
 @app.post("/predict")
 async def predict_similar_songs(req: PredictRequest):
     """
@@ -279,4 +350,4 @@ async def predict_similar_songs(req: PredictRequest):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="info", reload=True)
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, log_level="info", reload=True)

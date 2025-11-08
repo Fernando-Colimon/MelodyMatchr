@@ -1,10 +1,11 @@
 
+
 import math
 import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-from .data_structures import MinHeap, BST
+from data_structures import MinHeap, BST, HashTableTopK
 
 
 class Song:
@@ -35,6 +36,10 @@ class cosine_similarity:
         return dot_product / (magnitude1 * magnitude2)
 
 class SongMatcher:
+    
+    # MinHeap implementation for finding top-k similar songs.
+    # Time: O(n log k), Space: O(k)
+    
     def __init__(self, target_song, candidate_songs):
         self.target_song = target_song
         self.candidate_songs = candidate_songs
@@ -52,6 +57,27 @@ class SongMatcher:
 
         results.reverse()
         return results
+
+# TODO: Implement HashTable version  of above SongMatcher for faster top-k retrieval #
+
+class SongMatcherHashTable:
+    
+    # HashTable implementation for finding top-k similar songs.
+    # Time: O(n + k log k), Space: O(n)
+    
+    def __init__(self, target_song, candidate_songs):
+        self.target_song = target_song
+        self.candidate_songs = candidate_songs
+    
+    def match(self, top_k=5):
+        hash_table = HashTableTopK(num_buckets=100)
+        for candidate in self.candidate_songs:
+            sim = cosine_similarity(self.target_song, candidate).compute()
+            hash_table.insert(sim, candidate)
+        
+        return hash_table.get_top_k(top_k)
+    
+# END Implement HashTable version (We don't need to implement HashTable version for the Predictor) #
 
 # This is for the pridictive typing feature if fails DELETE or FIX 
 class SongPredictor:
@@ -94,37 +120,3 @@ class SongPredictor:
         
         results.reverse()
         return results
-
-def load_songs_from_dataset(dataset_path: str, song_class):  # Rename parameter
-    import pandas as pd 
-    import os
-    csv_files = [f for f in os.listdir(dataset_path) if f.endswith('.csv')]
-    if not csv_files:
-        raise FileNotFoundError(f"No CSV files found in {dataset_path}")
-    df = pd.read_csv(os.path.join(dataset_path, csv_files[0]))
-    songs = []
-    
-    feature_columns = [
-        'danceability', 'energy', 'loudness', 'speechiness',
-        'acousticness', 'instrumentalness', 'liveness', 
-        'valence', 'tempo'
-    ]
-    
-    available_features = [col for col in feature_columns if col in df.columns]
-    
-    for idx, row in df.iterrows():
-        try:
-            features = [float(row.get(col, 0.0)) if not pd.isna(row.get(col, 0.0)) else 0.0 
-                       for col in available_features]
-            
-            song_id = str(row.get('track_id', row.get('id', idx)))
-            name = str(row.get('track_name', row.get('name', 'Unknown')))
-            artist = str(row.get('artists', row.get('artist', 'Unknown Artist')))
-            
-            song_obj = song_class(song_id=song_id, name=name, artist=artist, features=features)
-            songs.append(song_obj)
-        except Exception as e:
-            continue
-    
-    print(f"Loaded {len(songs)} songs from dataset")
-    return songs
