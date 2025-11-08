@@ -69,7 +69,7 @@ song_predictor = SongPredictor(all_songs)
 
 @app.post("/search")
 async def search(req: SearchRequest):
-    results = search_trie.search(req.query, max_results=req.max_results or 5)
+    results = search_trie.search_prefix(req.query, max_results=req.max_results or 5)
     return {
         "query": req.query,
         "results": [

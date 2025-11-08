@@ -95,7 +95,7 @@ class SongPredictor:
         results.reverse()
         return results
 
-def load_songs_from_dataset(dataset_path: str, song):
+def load_songs_from_dataset(dataset_path: str, song_class):  # Rename parameter
     import pandas as pd 
     import os
     csv_files = [f for f in os.listdir(dataset_path) if f.endswith('.csv')]
@@ -121,8 +121,8 @@ def load_songs_from_dataset(dataset_path: str, song):
             name = str(row.get('track_name', row.get('name', 'Unknown')))
             artist = str(row.get('artists', row.get('artist', 'Unknown Artist')))
             
-            song = Song(song_id=song_id, name=name, artist=artist, features=features)
-            songs.append(song)
+            song_obj = song_class(song_id=song_id, name=name, artist=artist, features=features)
+            songs.append(song_obj)
         except Exception as e:
             continue
     
